@@ -1,0 +1,216 @@
+;; ------------------ argol language specification v0.1.0 ------------------
+;;
+;; This document describes argols's syntax, using the ABNF format as defined
+;; in RFC 5234 (https://www.ietf.org/rfc/rfc5234.txt).
+;;
+;; -------------------------------------------------------------------------
+
+
+;; ==========================================================
+;;  Overall Structure
+;; ==========================================================
+
+argol               = *expression *(*line-sep expression)
+
+expression          = ws [ comment ]
+expression          =/ ws command ws [ comment ]
+
+
+;; ==========================================================
+;; Whitespace
+;; ==========================================================
+
+ws                  = *wschar
+req-ws              = 1*wschar
+line-sep            = 1*([ comment ] wschar) / 1*([ comment ] newline)
+wschar              = space / htab
+newline             = lf / cr lf
+
+
+;; ==========================================================
+;; Comment
+;; ==========================================================
+
+comment-start       = hashtag                              ; #
+non-ascii           = %x80-D7FF / %xE000-10FFFF
+non-eol             = %x09 / %x20-7E / non-ascii           ; any non-line-break char
+
+comment             = comment-start *non-eol
+
+
+;; ==========================================================
+;; Argument Groups
+;; ==========================================================
+
+command             = req-ws identifier req-ws open-brace *line-sep command-kv-pairs close-brace *line-sep
+positional          = str_pos req-ws identifier req-ws open-brace *line-sep pos-kv-pairs close-brace *line-sep
+named               = str_named req-ws name-spec req-ws open-brace *line-sep named-kv-pairs close-brace *line-sep
+flag                = str_flag req-ws name-spec req-ws open-brace *line-sep flag-kv-pairs close-brace *line-sep
+
+
+;; ==========================================================
+;; Grouped Key-Value Pairs
+;; ==========================================================
+
+command-kv-pairs   = description-line *(1*line-sep command-element) *line-sep
+command-element     = command / positional / named / flag
+
+pos-kv-pairs        = description-line *(1*line-sep pos-kv-pair) *line-sep
+pos-kv-pair         = arg-num-line / type-line / required-line / default-line
+
+named-kv-pairs      = description-line *(1*line-sep named-kv-pair) *line-sep
+named-kv-pair       = arg-num-line / type-line / required-line / default-line / exclusive-line
+
+flag-kv-pairs       = description-line *(1*line-sep flag-kv-pair) *line-sep
+flag-kv-pair        = type-line / required-line / default-line / exclusive-line / store-line
+
+
+;; ==========================================================
+;; Key-Value Pairs
+;; ==========================================================
+
+keyval-sep          = ws equals ws       ; =
+
+description-line    = %x64.65.73.63 keyval-sep string                             ; desc =
+arg-num-line        = %x6E.75.6D keyval-sep arg-num                               ; num =
+type-line           = %x74.79.70.65 keyval-sep arg-type                           ; type =
+required-line       = %x72.65.71 keyval-sep boolean                               ; req =
+default-line        = %x64.65.66 keyval-sep value                                 ; def =
+exclusive-line      = %x65.78.63.6C keyval-sep identifier *(req-ws identifier)    ; excl =
+store-line          = %x73.74.6F.72.65 keyval-sep value                           ; store =
+
+
+;; ==========================================================
+;; Argument Names
+;; ==========================================================
+
+identifier          = 1*(ALPHA / DIGIT / underscore / dash)    ; A-Z, a-z, 0-9, -, _
+name-spec           = short-name [ slash long-name ]           ; a/argument
+short-name          = 1ALPHA                                   ; a
+long-name           = identifier                               ; argument
+
+
+;; ==========================================================
+;; String
+;; ==========================================================
+
+string              = dquote *char dquote
+
+char                = unescaped / escaped
+unescaped           = wschar / exclamation / %x23-5B / %x5D-7E / non-ascii
+escaped             = backslash escape-seq-char
+
+escape-seq-char     = dquote / backslash / chr_b / chr_e / chr_t
+
+
+;; ==========================================================
+;; Types
+;; ==========================================================
+
+arg-num             = uint-dec / uint-range / star
+arg-type            = str_string / str_int / str_float / str_path / str_bool
+
+uint-range          = uint-dec dot dot uint-dec                                   ; 1..5
+boolean             = str_true / str_false                                        ; true, false
+value               = string / int / float / path / boolean
+path                = str_path dot str_from open-paren ws string ws close-paren   ; path.from("~/home/user")
+
+
+;; ==========================================================
+;; Integer (`int`)
+;; ==========================================================
+
+int                 = dec-int / hex-int / oct-int / bin-int
+
+digit1to9           = %x31-39                                                     ; 1-9
+digit0to7           = %x30-37                                                     ; 0-7
+digit0to1           = %x30-31                                                     ; 0-1
+
+hex-prefix          = %x30.78                                                     ; 0x
+oct-prefix          = %x30.6F                                                     ; 0o
+bin-prefix          = %x30.62                                                     ; 0b
+
+dec-int             = [ sign ] dec-uint                                           ; +5, -5
+dec-uint            = DIGIT / digit1to9 1*( DIGIT / underscore DIGIT )            ; 5 
+
+hex-int             = hex-prefix HEXDIG *( HEXDIG / underscore HEXDIG )           ; 0x5
+oct-int             = oct-prefix digit0to7 *( digit0to7 / underscore digit0to7 )  ; 0o5
+bin-int             = bin-prefix digit0to1 *( digit0to1 / underscore digit0to1 )  ; 0b5
+
+
+;; ==========================================================
+;; Floating-Point Number (`float`)
+;; ==========================================================
+
+float               = dec-int ( exp / frac [ exp ] )
+float               =/ special-float
+
+frac                = dec-point zero-prefixable-int                               ; .05
+zero-prefixable-int = DIGIT *( DIGIT / underscore DIGIT )                         ; 05
+
+exp                 = chr_e float-exp-part                                        ; e-5, e+5, e5
+float-exp-part      = [ sign ] zero-prefixable-int
+
+special-float       = [ sign ] ( inf / nan )
+inf                 = %x69.6E.66           ; inf
+nan                 = %x6E.61.6E           ; nan
+
+
+;; ==========================================================
+;; Literal Characters
+;; ==========================================================
+
+plus                = %x2B                 ; +
+minus               = %x2D                 ; -
+sign                = plus / minus         ; +, -
+underscore          = %x5F                 ; _
+dash                = minus                ; -
+dot                 = %x2E                 ; .
+dec-point           = dot                  ; .
+dquote              = %x22                 ; "
+hashtag             = %x23                 ; #
+slash               = %x2F                 ; /
+equals              = %x3D                 ; =
+space               = %x20                 ; " "
+htab                = %x09                 ; \t
+cr                  = %x0D                 ; \r
+lf                  = %x0A                 ; \n
+star                = %x2A                 ; *
+exclamation         = %x21                 ; !
+backslash           = %x5C                 ; \\
+open-paren          = %x28                 ; (
+close-paren         = %x29                 ; )
+open-brace          = %x7b                 ; {
+close-brace         = %x7d                 ; }
+
+chr_e               = %x65                 ; e
+chr_b               = %x62                 ; b
+chr_t               = %x74                 ; t
+
+
+;; ==========================================================
+;; Literal Strings
+;; ==========================================================
+
+str_command         = %x63.6f.6d.6d.61.6e.64                ; command
+str_pos             = %x70.6f.73                            ; pos
+str_named           = %x6e.61.6d.65.64                      ; named
+str_flag            = %x66.6c.61.67                         ; flag
+
+str_string          = %x73.74.72.69.6e.67                   ; string
+str_int             = %x75.69.6e.74                         ; int
+str_float           = %x66.6c.6f.61.74                      ; float
+str_path            = %x70.61.74.68                         ; path
+str_from            = %x66.72.6f.6d                         ; from
+str_bool            = %x62.6f.6f.6c                         ; bool
+str_true            = %x74.72.75.65                         ; true
+str_false           = %x66.61.6C.73.65                      ; false
+
+
+;; ==========================================================
+;; Built-in ABNF Terms
+;; ==========================================================
+
+ALPHA               = %x41-5A / %x61-7A    ; A-Z, a-z
+DIGIT               = %x30-39              ; 0-9
+HEXDIG              = DIGIT / %x41-46      ; 0-F
